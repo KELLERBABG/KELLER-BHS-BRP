@@ -68,9 +68,9 @@ impl SessionGuard {
 async fn main() {
     println!("--- GHOST-CHAT V2.0 (DYNAMIC PORT & IDENTITY) ---");
 
-    let socket = UdpSocket::bind("0.0.0.0:0").expect("Konnte keinen UDP Port binden");
+    let socket = UdpSocket::bind("0.0.0.0:0").expect("Couldn't find a UDP Port");
     let local_addr = socket.local_addr().unwrap();
-    println!("[INFO] Gebunden an: {}", local_addr);
+    println!("[INFO] Bound to: {}", local_addr);
 
     print!("Nickname: "); io::stdout().flush().unwrap();
     let mut nickname = String::new(); io::stdin().read_line(&mut nickname).unwrap();
@@ -80,7 +80,7 @@ async fn main() {
     let mut target_ip_raw = String::new(); io::stdin().read_line(&mut target_ip_raw).unwrap();
     let target_ip = target_ip_raw.trim().to_string();
 
-    // Falls kein Port angegeben wurde, nehmen wir 9000 als Startwert
+    // If no port is given, 9000 is used by default. IPv6 addresses must be given in full form with brackets, e.g. [2001:db8::1]
     let initial_target = if target_ip.contains(':') { target_ip } else { format!("{}:9000", target_ip) };
     let target_addr = Arc::new(RwLock::new(initial_target));
     
@@ -101,7 +101,7 @@ async fn main() {
     let mut seed = [0u8; 32];
     rand::thread_rng().fill(&mut seed);
     let my_identity = SigningKey::from_bytes(&seed);
-    println!("[SYSTEM] Deine ID Fingerprint: {}", hex::encode(&my_identity.verifying_key().to_bytes()[0..8]));
+    println!("[SYSTEM] Your ID Fingerprint: {}", hex::encode(&my_identity.verifying_key().to_bytes()[0..8]));
 
     // --- RECEIVER THREAD ---
     tokio::spawn(async move {
@@ -118,7 +118,7 @@ async fn main() {
                     let new_addr = from_addr.to_string();
                     if *t != new_addr {
                         *t = new_addr;
-                        println!("\n[INFO] Zieladresse auf {} aktualisiert.", from_addr);
+                        println!("\n[INFO] Target address updated to {}.", from_addr);
                     }
                 }
 
@@ -168,8 +168,8 @@ async fn main() {
                                                 let mut k = [0u8; 32]; k.copy_from_slice(&key_recovered[0..32]);
                                                 *mk = Some(k);
                                                 guard = SessionGuard::new();
-                                                println!("\n[TRUST] Handshake verifiziert! ID: {}", hex::encode(&combined[848..856]));
-                                                println!("Du kannst jetzt Nachrichten senden.\n> ");
+                                                println!("\n[TRUST] Handshake verified! ID: {}", hex::encode(&combined[848..856]));
+                                                println!("You can now send messages.\n> ");
                                                 io::stdout().flush().unwrap();
                                             }
                                         }

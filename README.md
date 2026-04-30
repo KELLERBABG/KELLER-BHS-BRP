@@ -30,7 +30,7 @@
 
 ## Overview
 
-GHOST-CHAT V2.0 is a peer-to-peer encrypted messaging system built in Rust that operates over raw UDP. It is designed around two foundational principles that, when combined, make passive interception and active tampering extremely difficult even for well-resourced adversaries:
+GHOST-CHAT is a peer-to-peer encrypted messaging system built in Rust that operates over raw UDP. It is designed around two foundational principles that, when combined, make passive interception and active tampering extremely difficult even for well-resourced adversaries:
 
 **Blind Routing Protocol (BRP)** — a layered approach to key derivation, transmission splitting, and counter-based replay prevention that ensures no single captured packet can yield plaintext or key material.
 
@@ -148,7 +148,7 @@ In Byzantine fault-tolerant systems, the concern is not just packet loss but act
 
 ## Cryptographic Stack
 
-GHOST-CHAT V2.0 uses a hybrid classical + post-quantum cryptographic stack:
+GHOST-CHAT uses a hybrid classical + post-quantum cryptographic stack:
 
 ### Key Exchange: X25519 + Kyber512 (Hybrid KEM)
 

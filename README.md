@@ -1,4 +1,4 @@
-# 👻 KELLER BHS BRP
+# 👻 KELLER post-quantum, Cryptographically layered P2P Chat System
 
 > **Blind Routing Protocol (BRP) · Black Hole Storage (BHS)**  
 > A cryptographically layered, post-quantum peer-to-peer chat system designed for adversarial networks.

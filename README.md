@@ -370,6 +370,7 @@ cargo build --release
 # > Nickname: Bob
 # > Ziel-IP: 192.168.1.10
 ```
+Or easier, download the EXE file and you can directly chat with someone in your LAN or WAN, depending on your usecase.
 
 The application will display each peer's identity fingerprint. Verify these out-of-band (e.g., via phone or a pre-established secure channel) to confirm you are speaking with the intended party.
 

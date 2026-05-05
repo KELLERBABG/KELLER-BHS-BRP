@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2021"
 description = "Post-quantum, cryptographically layered P2P chat over raw UDP"
 license = "MIT"
-repository = "https://github.com/yourusername/vantablack"
+repository = "https://github.com/KELLERBABG/vantablack"
 
 [dependencies]
 tokio = { version = "1.44", features = ["full"] }

@@ -5,7 +5,7 @@ pub const BASE_SIZE: usize = 512;
 pub const JITTER_MAX: usize = 64;
 pub const HANDSHAKE_ID: u8 = 255;
 
-// ---------- Packet field offsets (shared by sender and receiver) ----------
+// ---------- Packet field offsets (shared by sender and receiver) ---------
 //
 // Byte layout of every packet (non-handshake and handshake share the same
 // header; only payload size differs):

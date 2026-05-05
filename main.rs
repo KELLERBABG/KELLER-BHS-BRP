@@ -1,68 +1,32 @@
+mod session;
+mod crypto;
+mod network;
+
+use session::SessionGuard;
+use crypto::{
+    encrypt_message, decrypt_message,
+    rs_encode, rs_reconstruct,
+    shamir_split, shamir_join,
+    random_key, PeerIdentity,
+    HANDSHAKE_BLOB_LEN,
+};
+use network::{
+    HANDSHAKE_ID,
+    send_handshake_packets, send_data_packets,
+    parse_counter, shard_len_for,
+    OFFSET_MSG_ID, OFFSET_ORIG_LEN,
+    OFFSET_SHARE_START, OFFSET_SHARE_END, OFFSET_SHARD_START,
+};
+
 use reed_solomon_erasure::galois_8::ReedSolomon;
-use ring::aead::{self, LessSafeKey, UnboundKey};
-use ring::rand::{SecureRandom, SystemRandom};
-use gf256::shamir::shamir;
 use std::net::UdpSocket;
 use std::{sync::Arc, io::{self, Write}, collections::HashMap};
 use rand::Rng;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{sleep, Duration};
 use tokio::sync::RwLock;
 
-// Krypto-Libraries
-use x25519_dalek::{EphemeralSecret, PublicKey as XPublicKey};
-use pqcrypto_kyber::kyber512;
-use pqcrypto_traits::kem::PublicKey as KyberTrait;
-use ed25519_dalek::{SigningKey, Signer, Verifier, VerifyingKey as EdPublicKey, Signature};
-
-const BASE_SIZE: usize = 512;
-const JITTER_MAX: usize = 64;
-const HANDSHAKE_ID: u8 = 255;
-const WINDOW_SIZE: u64 = 128;
-const SESSION_HARD_TIMEOUT: Duration = Duration::from_secs(86400); 
-const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(1800);  
-
-struct SessionGuard {
-    start_time: Instant,
-    last_activity: Instant,
-    v_max: u64,
-    bitmask: u128,
-}
-
-impl SessionGuard {
-    fn new() -> Self {
-        Self {
-            start_time: Instant::now(),
-            last_activity: Instant::now(),
-            v_max: 0,
-            bitmask: 0,
-        }
-    }
-
-    fn is_valid(&self) -> bool {
-        let now = Instant::now();
-        now.duration_since(self.start_time) < SESSION_HARD_TIMEOUT &&
-        now.duration_since(self.last_activity) < SESSION_IDLE_TIMEOUT
-    }
-
-    fn check_and_update(&mut self, counter: u64) -> bool {
-        if !self.is_valid() { return false; }
-        if counter > self.v_max {
-            let shift = counter - self.v_max;
-            if shift >= WINDOW_SIZE { self.bitmask = 1; }
-            else { self.bitmask = (self.bitmask << shift) | 1; }
-            self.v_max = counter;
-            self.last_activity = Instant::now();
-            true
-        } else {
-            if counter <= self.v_max.saturating_sub(WINDOW_SIZE) { return false; }
-            let offset = (self.v_max - counter) as u32;
-            if (self.bitmask & (1 << offset)) != 0 { return false; }
-            self.bitmask |= 1 << offset;
-            self.last_activity = Instant::now();
-            true
-        }
-    }
-}
+use x25519_dalek::EphemeralSecret;
+use ed25519_dalek::{Verifier, VerifyingKey as EdPublicKey, Signature};
 
 #[tokio::main]
 async fn main() {
@@ -80,12 +44,13 @@ async fn main() {
     let mut target_ip_raw = String::new(); io::stdin().read_line(&mut target_ip_raw).unwrap();
     let target_ip = target_ip_raw.trim().to_string();
 
-    // If no port is given, 9000 is used by default. IPv6 addresses must be given in full form with brackets, e.g. [2001:db8::1]
+    // If no port is given, 9000 is used by default.
+    // IPv6 addresses must be given in full form with brackets, e.g. [2001:db8::1]:9000
     let initial_target = if target_ip.contains(':') { target_ip } else { format!("{}:9000", target_ip) };
     let target_addr = Arc::new(RwLock::new(initial_target));
-    
-    let target_addr_rx = Arc::clone(&target_addr);
-    let target_addr_tx = Arc::clone(&target_addr);
+
+    let target_addr_rx   = Arc::clone(&target_addr);
+    let target_addr_tx   = Arc::clone(&target_addr);
     let target_addr_chat = Arc::clone(&target_addr);
 
     socket.set_nonblocking(true).unwrap();
@@ -98,21 +63,37 @@ async fn main() {
     let master_key_tx = Arc::clone(&master_key);
     let global_tx_counter = Arc::new(RwLock::new(0u64));
 
+    // --- IDENTITY ---
     let mut seed = [0u8; 32];
     rand::thread_rng().fill(&mut seed);
-    let my_identity = SigningKey::from_bytes(&seed);
-    println!("[SYSTEM] Your ID Fingerprint: {}", hex::encode(&my_identity.verifying_key().to_bytes()[0..8]));
+    let x_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
+    let identity = PeerIdentity::generate(&seed, x_secret);
+    println!("[SYSTEM] Your ID Fingerprint: {}", identity.fingerprint());
 
-    // --- RECEIVER THREAD ---
+    // Pre-build the handshake blob and encode it into RS shards + Shamir shares
+    let hs_blob = identity.build_handshake_blob();
+    let mut hs_temp_key = random_key();
+    let hs_shares = shamir_split(&mut hs_temp_key);
+    let mut hs_shards = vec![
+        hs_blob[0..480].to_vec(),
+        hs_blob[480..960].to_vec(),
+        vec![0u8; 480],
+    ];
+    ReedSolomon::new(2, 1).unwrap().encode(&mut hs_shards).unwrap();
+
+    // --- RECEIVER TASK ---
     tokio::spawn(async move {
+        // pool: msg_id -> (shares, shards, original_len, counter)
         let mut pool: HashMap<u8, (Vec<Vec<u8>>, Vec<Vec<u8>>, usize, u64)> = HashMap::new();
         let mut guard = SessionGuard::new();
 
         loop {
             let mut buf = [0u8; 2048];
             if let Ok((len, from_addr)) = socket_rx.recv_from(&mut buf) {
-                let msg_id = buf[0];
-                
+                let msg_id  = buf[OFFSET_MSG_ID];
+                let msg_len = buf[OFFSET_ORIG_LEN] as usize;
+
+                // Update peer address dynamically on every handshake packet
                 if msg_id == HANDSHAKE_ID {
                     let mut t = target_addr_rx.write().await;
                     let new_addr = from_addr.to_string();
@@ -122,70 +103,81 @@ async fn main() {
                     }
                 }
 
-                if msg_id != 0 { 
-                    let msg_len = buf[1] as usize;
-                    let mut c_bytes = [0u8; 8];
-                    c_bytes.copy_from_slice(&buf[35..43]);
-                    let packet_counter = u64::from_be_bytes(c_bytes);
+                if msg_id == 0 { continue; } // reserved / padding packet
 
-                    let effective_len = if msg_id == HANDSHAKE_ID { 960 } else { ((msg_len + 16 + 1) / 2) * 2 };
-                    let shard_size = effective_len / 2;
+                let packet_counter = parse_counter(&buf);
+                let shard_len = shard_len_for(msg_id, msg_len);
 
-                    if len >= 43 + shard_size {
-                        let share = buf[2..35].to_vec();
-                        let shard = buf[43..43+shard_size].to_vec();
+                if len >= OFFSET_SHARD_START + shard_len {
+                    let share = buf[OFFSET_SHARE_START..OFFSET_SHARE_END].to_vec();
+                    let shard = buf[OFFSET_SHARD_START..OFFSET_SHARD_START + shard_len].to_vec();
 
-                        let entry = pool.entry(msg_id).or_insert((Vec::new(), Vec::new(), msg_len, packet_counter));
-                        entry.0.push(share);
-                        entry.1.push(shard);
+                    let entry = pool
+                        .entry(msg_id)
+                        .or_insert((Vec::new(), Vec::new(), msg_len, packet_counter));
+                    entry.0.push(share);
+                    entry.1.push(shard);
 
-                        if entry.0.len() >= 2 {
-                            if msg_id != HANDSHAKE_ID && !guard.check_and_update(entry.3) {
-                                pool.remove(&msg_id);
-                                continue;
-                            }
+                    if entry.0.len() >= 2 {
+                        // Replay / session check (handshake packets are exempt)
+                        if msg_id != HANDSHAKE_ID && !guard.check_and_update(entry.3) {
+                            pool.remove(&msg_id);
+                            continue;
+                        }
 
-                            let key_recovered = shamir::reconstruct(&entry.0[0..2]);
-                            let mut recover = vec![Some(entry.1[0].clone()), Some(entry.1[1].clone()), None];
-                            
-                            if ReedSolomon::new(2, 1).unwrap().reconstruct(&mut recover).is_ok() {
-                                let mut combined = [recover[0].as_ref().unwrap().as_slice(), recover[1].as_ref().unwrap().as_slice()].concat();
-                                
-                                if msg_id == HANDSHAKE_ID {
-                                    if master_key_rx.read().await.is_some() {
-                                        pool.remove(&msg_id);
-                                        continue;
-                                    }
+                        let key_recovered = shamir_join(&entry.0[0], &entry.0[1]);
+                        let mut recover = vec![
+                            Some(entry.1[0].clone()),
+                            Some(entry.1[1].clone()),
+                            None,
+                        ];
 
-                                    let received_kyber_pk = &combined[48..848];
-                                    let received_ed_pk_res = EdPublicKey::from_bytes(combined[848..880].try_into().expect("Key len"));
-                                    let received_sig_res = Signature::from_bytes(combined[880..944].try_into().expect("Sig len"));
+                        if rs_reconstruct(&mut recover).is_ok() {
+                            let mut combined = [
+                                recover[0].as_ref().unwrap().as_slice(),
+                                recover[1].as_ref().unwrap().as_slice(),
+                            ]
+                            .concat();
 
-                                    if let (Ok(peer_pk), sig) = (received_ed_pk_res, received_sig_res) {
-                                        if peer_pk.verify(received_kyber_pk, &sig).is_ok() {
-                                            let mut mk = master_key_rx.write().await;
-                                            if mk.is_none() {
-                                                let mut k = [0u8; 32]; k.copy_from_slice(&key_recovered[0..32]);
-                                                *mk = Some(k);
-                                                guard = SessionGuard::new();
-                                                println!("\n[TRUST] Handshake verified! ID: {}", hex::encode(&combined[848..856]));
-                                                println!("You can now send messages.\n> ");
-                                                io::stdout().flush().unwrap();
-                                            }
+                            if msg_id == HANDSHAKE_ID {
+                                // Accept only the first handshake
+                                if master_key_rx.read().await.is_some() {
+                                    pool.remove(&msg_id);
+                                    continue;
+                                }
+
+                                // combined layout: [magic(16)|x_pub(32)|kyber_pub(800)|ed_vk(32)|sig(64)]
+                                let received_kyber_pk = &combined[48..848];
+                                let ed_pk_res  = EdPublicKey::from_bytes(combined[848..880].try_into().expect("Key len"));
+                                let sig_res    = Signature::from_bytes(combined[880..944].try_into().expect("Sig len"));
+
+                                if let Ok(peer_pk) = ed_pk_res {
+                                    if peer_pk.verify(received_kyber_pk, &sig_res).is_ok() {
+                                        let mut mk = master_key_rx.write().await;
+                                        if mk.is_none() {
+                                            let mut k = [0u8; 32];
+                                            k.copy_from_slice(&key_recovered[0..32]);
+                                            *mk = Some(k);
+                                            guard = SessionGuard::new();
+                                            println!(
+                                                "\n[TRUST] Handshake verified! ID: {}",
+                                                hex::encode(&combined[848..856])
+                                            );
+                                            println!("You can now send messages.\n> ");
+                                            io::stdout().flush().unwrap();
                                         }
                                     }
-                                } else {
-                                    combined.truncate(entry.2 + 16);
-                                    let unbound = UnboundKey::new(&aead::CHACHA20_POLY1305, &key_recovered).unwrap();
-                                    let dec_key = LessSafeKey::new(unbound);
-                                    if let Ok(dec) = dec_key.open_in_place(aead::Nonce::assume_unique_for_key([0u8; 12]), aead::Aad::empty(), &mut combined) {
-                                        println!("\rPartner: {}\n> ", String::from_utf8_lossy(dec));
-                                        io::stdout().flush().unwrap();
-                                    }
+                                }
+                            } else {
+                                // Data message
+                                combined.truncate(entry.2 + 16);
+                                if let Ok(dec) = decrypt_message(&key_recovered, &mut combined) {
+                                    println!("\rPartner: {}\n> ", String::from_utf8_lossy(dec));
+                                    io::stdout().flush().unwrap();
                                 }
                             }
-                            pool.remove(&msg_id);
                         }
+                        pool.remove(&msg_id);
                     }
                 }
             }
@@ -193,52 +185,25 @@ async fn main() {
         }
     });
 
-    // --- HANDSHAKE LOOP ---
-    let tx_hs = Arc::clone(&socket_tx);
-    let addr_hs_lock = Arc::clone(&target_addr_tx);
-    let mk_checker = Arc::clone(&master_key);
-    
-    let (my_k_public, _) = kyber512::keypair();
-    let my_x_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
-    let my_x_public = XPublicKey::from(&my_x_secret);
-    
-    let mut hs_blob = vec![0u8; 960];
-    hs_blob[0..16].copy_from_slice(b"GHOST_HANDSHAKE_");
-    hs_blob[16..48].copy_from_slice(my_x_public.as_bytes());
-    hs_blob[48..848].copy_from_slice(my_k_public.as_bytes());
-    
-    let sig = my_identity.sign(my_k_public.as_bytes());
-    hs_blob[848..880].copy_from_slice(&my_identity.verifying_key().to_bytes());
-    hs_blob[880..944].copy_from_slice(&sig.to_bytes());
-
-    let rs = ReedSolomon::new(2, 1).unwrap();
-    let mut hs_temp_key = [0u8; 32];
-    SystemRandom::new().fill(&mut hs_temp_key).unwrap();
-    let hs_shares = shamir::generate(&mut hs_temp_key, 3, 2);
-    let mut hs_shards = vec![hs_blob[0..480].to_vec(), hs_blob[480..960].to_vec(), vec![0u8; 480]];
-    rs.encode(&mut hs_shards).unwrap();
+    // --- HANDSHAKE TASK ---
+    let tx_hs       = Arc::clone(&socket_tx);
+    let addr_hs     = Arc::clone(&target_addr_tx);
+    let mk_checker  = Arc::clone(&master_key);
 
     tokio::spawn(async move {
         loop {
             if mk_checker.read().await.is_some() {
                 sleep(Duration::from_secs(10)).await;
-                continue; 
-            } 
-
-            let target = addr_hs_lock.read().await;
-            for i in 0..3 {
-                let mut p = vec![0u8; BASE_SIZE + 64];
-                p[0] = HANDSHAKE_ID;
-                p[2..35].copy_from_slice(&hs_shares[i]);
-                p[35..43].copy_from_slice(&0u64.to_be_bytes());
-                p[43..43+480].copy_from_slice(&hs_shards[i]);
-                let _ = tx_hs.send_to(&p, &*target);
+                continue;
             }
-            sleep(Duration::from_millis(1500)).await; 
+            let target = addr_hs.read().await;
+            send_handshake_packets(&hs_shares, &hs_shards, &tx_hs, &*target);
+            drop(target);
+            sleep(Duration::from_millis(1500)).await;
         }
     });
 
-    // --- CHAT LOOP ---
+    // --- CHAT LOOP (main task) ---
     loop {
         print!("> "); io::stdout().flush().unwrap();
         let mut input = String::new();
@@ -252,29 +217,29 @@ async fn main() {
             let msg = format!("{}: {}", nickname, raw);
             let mut data = msg.as_bytes().to_vec();
             let original_len = data.len();
-            let enc_key = LessSafeKey::new(UnboundKey::new(&aead::CHACHA20_POLY1305, &mk).unwrap());
-            enc_key.seal_in_place_append_tag(aead::Nonce::assume_unique_for_key([0u8; 12]), aead::Aad::empty(), &mut data).unwrap();
-            
-            if data.len() % 2 != 0 { data.push(0); }
-            let mid = data.len() / 2;
-            let mut shards = vec![data[0..mid].to_vec(), data[mid..].to_vec(), vec![0u8; mid]];
-            ReedSolomon::new(2, 1).unwrap().encode(&mut shards).unwrap();
-            
-            let id = rand::thread_rng().gen_range(1..254);
-            let mk_shares = shamir::generate(&mut mk.clone(), 3, 2);
+
+            encrypt_message(&mk, &mut data);
+            let shards = rs_encode(&mut data);
+            let shard_len = shards[0].len();
+
+            let id = rand::thread_rng().gen_range(1u8..254);
+            let mut mk_clone = mk;
+            let mk_shares = shamir_split(&mut mk_clone);
+
             let mut c_guard = global_tx_counter.write().await;
             *c_guard += 1;
             let current_c = *c_guard;
 
-            for i in 0..3 {
-                let jitter = rand::thread_rng().gen_range(0..JITTER_MAX);
-                let mut p = vec![0u8; BASE_SIZE + jitter];
-                p[0] = id; p[1] = original_len as u8;
-                p[2..35].copy_from_slice(&mk_shares[i]);
-                p[35..43].copy_from_slice(&current_c.to_be_bytes());
-                p[43..43+mid].copy_from_slice(&shards[i]);
-                let _ = socket_tx.send_to(&p, &*target);
-            }
+            send_data_packets(
+                id,
+                original_len,
+                &mk_shares,
+                &shards,
+                shard_len,
+                current_c,
+                &socket_tx,
+                &*target,
+            );
         }
     }
 }

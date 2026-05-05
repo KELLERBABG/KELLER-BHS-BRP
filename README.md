@@ -1,4 +1,4 @@
-# 👻 KELLER post-quantum, Cryptographically layered P2P Chat System
+# 🖤 VANTABLACK — Post-Quantum, Cryptographically Layered P2P Chat
 
 > **Blind Routing Protocol (BRP) · Black Hole Storage (BHS)**  
 > A cryptographically layered, post-quantum peer-to-peer chat system designed for adversarial networks.
@@ -12,7 +12,7 @@
 
 ## Table of Contents
 
-- [Why GHOST-CHAT](#why-ghost-chat)
+- [Why VANTABLACK](#why-vantablack)
 - [Overview](#overview)
 - [Module Structure](#module-structure)
 - [Core Architecture](#core-architecture)
@@ -33,13 +33,13 @@
 
 ---
 
-## Why GHOST-CHAT?
+## Why VANTABLACK?
 
-Most people who want private messaging reach for Signal, WhatsApp, or Telegram. These are good products. But they all share a structural problem: **they are centralized, server-dependent, and not designed to survive a determined, resourced adversary or a post-quantum threat.** GHOST-CHAT was built for the cases they cannot cover.
+Most people who want private messaging reach for Signal, WhatsApp, or Telegram. These are good products. But they all share a structural problem: **they are centralized, server-dependent, and not designed to survive a determined, resourced adversary or a post-quantum threat.** VANTABLACK was built for the cases they cannot cover.
 
 ### The Problem With Popular Messengers
 
-| Property | Signal | WhatsApp | Telegram | Wire | GHOST-CHAT |
+| Property | Signal | WhatsApp | Telegram | Wire | VANTABLACK |
 |---|---|---|---|---|---|
 | End-to-end encrypted | ✅ | ✅ | ✅ (opt-in) | ✅ | ✅ |
 | Centralized server required | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -54,7 +54,7 @@ Most people who want private messaging reach for Signal, WhatsApp, or Telegram. 
 
 ### Signal Is Good — But It Has a Server
 
-Signal is widely considered the gold standard for consumer messaging security. Its Double Ratchet protocol provides forward secrecy and break-in recovery that GHOST-CHAT does not currently implement. For most threat models, Signal is excellent.
+Signal is widely considered the gold standard for consumer messaging security. Its Double Ratchet protocol provides forward secrecy and break-in recovery that VANTABLACK does not currently implement. For most threat models, Signal is excellent.
 
 However, Signal requires connecting to Signal's infrastructure. That means:
 
@@ -62,7 +62,7 @@ However, Signal requires connecting to Signal's infrastructure. That means:
 - **Signal can be compelled or blocked** — a government can demand metadata under legal process, or simply block Signal's servers at the network level. Both have happened.
 - **Signal requires a phone number** — your identity is tied to a real-world identifier from the moment you register.
 
-GHOST-CHAT operates entirely peer-to-peer over raw UDP. There is no server. No account. No phone number. No metadata leaves your machine except the packets themselves — and those packets are designed to reveal as little as possible even to a passive observer on the wire.
+VANTABLACK operates entirely peer-to-peer over raw UDP. There is no server. No account. No phone number. No metadata leaves your machine except the packets themselves — and those packets are designed to reveal as little as possible even to a passive observer on the wire.
 
 ### Telegram Is Not What People Think
 
@@ -74,11 +74,11 @@ WhatsApp's content encryption is solid (it uses the Signal Protocol under the ho
 
 ### Wire and Similar "Business-Secure" Tools
 
-Wire and similar enterprise-grade secure messengers improve on consumer apps in some respects — Wire does not require a phone number, for example — but they are still server-reliant, still centralized, and none implement post-quantum key exchange or the shard-based packet-level obfuscation that GHOST-CHAT provides.
+Wire and similar enterprise-grade secure messengers improve on consumer apps in some respects — Wire does not require a phone number, for example — but they are still server-reliant, still centralized, and none implement post-quantum key exchange or the shard-based packet-level obfuscation that VANTABLACK provides.
 
-### Where GHOST-CHAT Fits
+### Where VANTABLACK Fits
 
-GHOST-CHAT is **not a Signal replacement for everyday use.** It does not have persistent message history, group chats, or a polished mobile app. What it does have is a specific set of properties that no centralized messenger can offer:
+VANTABLACK is **not a Signal replacement for everyday use.** It does not have persistent message history, group chats, or a polished mobile app. What it does have is a specific set of properties that no centralized messenger can offer:
 
 **1. No infrastructure dependency.** Two machines, a network path between them, and nothing else. No DNS, no CDN, no servers to seize or block.
 
@@ -88,13 +88,13 @@ GHOST-CHAT is **not a Signal replacement for everyday use.** It does not have pe
 
 **4. Zero identity linkage.** Identity keys are generated fresh at startup and never persisted. There is no account, no registration, no phone number, and no server log to subpoena.
 
-If your threat model includes state-level passive interception, traffic analysis, server compromise, quantum-capable adversaries, or the need to communicate without revealing that you are communicating at all — GHOST-CHAT was built for exactly that.
+If your threat model includes state-level passive interception, traffic analysis, server compromise, quantum-capable adversaries, or the need to communicate without revealing that you are communicating at all — VANTABLACK was built for exactly that.
 
 ---
 
 ## Overview
 
-GHOST-CHAT is a peer-to-peer encrypted messaging system built in Rust that operates over raw UDP. It is designed around two foundational principles that, when combined, make passive interception and active tampering extremely difficult even for well-resourced adversaries:
+VANTABLACK is a peer-to-peer encrypted messaging system built in Rust that operates over raw UDP. It is designed around two foundational principles that, when combined, make passive interception and active tampering extremely difficult even for well-resourced adversaries:
 
 **Blind Routing Protocol (BRP)** — a layered approach to key derivation, transmission splitting, and counter-based replay prevention that ensures no single captured packet can yield plaintext or key material. BRP governs *how* data travels: splitting keys, sequencing packets, and obfuscating traffic patterns.
 
@@ -135,7 +135,7 @@ main.rs
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     GHOST-CHAT V2.0                     │
+│                     VANTABLACK V2.0                     │
 ├──────────────┬──────────────────────┬───────────────────┤
 │  HANDSHAKE   │    DATA CHANNEL      │   SESSION GUARD   │
 │  (BRP/BHS)   │     (BRP/BHS)        │  (Replay Window)  │
@@ -162,7 +162,7 @@ All tasks share state through `Arc<RwLock<_>>` primitives, making the system thr
 
 ## GHOST Protocol Stack
 
-Every transmission in GHOST-CHAT passes through seven ordered protocol layers. Each layer adds an independent security property; an adversary must defeat all of them simultaneously to compromise a session.
+Every transmission in VANTABLACK passes through seven ordered protocol layers. Each layer adds an independent security property; an adversary must defeat all of them simultaneously to compromise a session.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -360,7 +360,7 @@ In Byzantine fault-tolerant systems, the concern is not just packet loss but act
 
 ## Cryptographic Stack
 
-GHOST-CHAT uses a hybrid classical + post-quantum cryptographic stack:
+VANTABLACK uses a hybrid classical + post-quantum cryptographic stack:
 
 ### Key Exchange: X25519 + Kyber512 (Hybrid KEM)
 
@@ -521,7 +521,7 @@ After expiry, `check_and_update` returns `false` for all packets, effectively cl
 
 ## Why Interception Is Practically Infeasible
 
-The following summarizes the compounding barriers an adversary faces when attempting to compromise a GHOST-CHAT session.
+The following summarizes the compounding barriers an adversary faces when attempting to compromise a VANTABLACK session.
 
 ### Against Passive Eavesdropping (LAN/WAN sniffing)
 
@@ -564,7 +564,7 @@ A quantum computer running Shor's algorithm breaks X25519 (ECDH) but **not** Kyb
 ### Project Layout
 
 ```
-ghost-chat/
+vantablack/
 ├── Cargo.toml
 └── src/
     ├── main.rs       ← entry point & async orchestration
@@ -576,8 +576,8 @@ ghost-chat/
 ### Build
 
 ```bash
-git clone https://github.com/yourusername/ghost-chat.git
-cd ghost-chat
+git clone https://github.com/yourusername/vantablack.git
+cd vantablack
 cargo build --release
 ```
 
@@ -585,12 +585,12 @@ cargo build --release
 
 ```bash
 # On machine A
-./target/release/ghost-chat
+./target/release/vantablack
 # > Nickname: Alice
 # > Ziel-IP: 192.168.1.42
 
 # On machine B
-./target/release/ghost-chat
+./target/release/vantablack
 # > Nickname: Bob
 # > Ziel-IP: 192.168.1.10
 ```
